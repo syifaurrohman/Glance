@@ -3,7 +3,7 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDt05uBSSjSBZgLWC1v_r__H7Tr8wPV3zc",
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: "glance-app-65267.firebaseapp.com",
   projectId: "glance-app-65267",
   storageBucket: "glance-app-65267.firebasestorage.app",
