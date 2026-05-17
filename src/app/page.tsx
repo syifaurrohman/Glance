@@ -779,9 +779,9 @@ export default function GlanceApp() {
 
   // Auth state
   useEffect(() => {
+    if (!auth) return;
     return onAuthStateChanged(auth, setUser);
   }, []);
-
   // --- KEYBOARD EVENT LISTENER (ENTER TO CONFIRM) ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
