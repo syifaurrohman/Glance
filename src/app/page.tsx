@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
   type User,
@@ -42,7 +44,12 @@ import {
   Eye,
   Filter,
   RotateCcw,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
+
+import Confetti from 'react-confetti';
+
 
 // --- TYPES ---
 interface Category {
@@ -60,11 +67,15 @@ interface Transaction {
   categoryId: string;
   date: string;
   createdAt: string;
+  updatedAt?: string;
+
 }
 
 interface BudgetItem {
   categoryId: string;
   limit: number;
+  startDate?: string; 
+  endDate?: string;    
 }
 
 interface ScannedItem {
@@ -102,17 +113,11 @@ async function saveData<T>(uid: string, type: FirestoreDataType, data: T): Promi
 // --- LOGO COMPONENT ---
 function GlanceLogo({ size = 40 }: { size?: number }) {
   return (
-    <div style={{ width: size, height: size, borderRadius: size / 3, overflow: 'hidden', flexShrink: 0 }}>
-      <svg viewBox="0 0 512 512" style={{ width: '100%', height: '100%' }}>
-        <rect width="512" height="512" fill="#6366F1" rx="128" />
-        <path d="M120 180C120 146.863 146.863 120 180 120H332C365.137 120 392 146.863 392 180V332C392 365.137 365.137 392 332 392H180C146.863 392 120 365.137 120 332V180Z" fill="white" />
-        <path d="M392 250H300C277.909 250 260 272.386 260 300C260 327.614 277.909 350 300 350H392V250Z" fill="#6366F1" />
-        <circle cx="315" cy="300" r="18" fill="white" />
-        <circle cx="215" cy="185" r="28" fill="#6366F1" />
-        <circle cx="215" cy="185" r="10" fill="white" />
-        <circle cx="235" cy="225" r="14" fill="#6366F1" />
-      </svg>
-    </div>
+    <img
+      src="/logo.svg"
+      alt="Glance Logo"
+      style={{ width: size, height: size, borderRadius: size / 3, objectFit: 'cover', flexShrink: 0 }}
+    />
   );
 }
 
@@ -192,13 +197,25 @@ function DonutChart({ transactions, categories }: { transactions: Transaction[];
   }, [expenses]);
 
   const totalExp = expenses.reduce((s, e) => s + e.amount, 0);
+
+  // State untuk menyimpan segmen yang sedang di-hover kursor
+  const [hoveredSeg, setHoveredSeg] = useState<{ name: string; amount: number; icon: string } | null>(null);
+
   const segments = useMemo(() => {
     if (totalExp === 0) return [];
     let offset = 0;
     return Object.entries(categoryTotals).map(([catId, amount]) => {
       const pct = (amount / totalExp) * 100;
       const cat = categories.find(c => c.id === catId);
-      const seg = { catId, name: cat?.name || 'Lainnya', icon: cat?.icon || '💰', color: cat?.color || '#6B7280', pct, offset };
+      const seg = { 
+        catId, 
+        name: cat?.name || 'Lainnya', 
+        icon: cat?.icon || '💰', 
+        color: cat?.color || '#6B7280', 
+        pct, 
+        offset,
+        amount 
+      };
       offset += pct;
       return seg;
     }).sort((a, b) => b.pct - a.pct);
@@ -208,51 +225,112 @@ function DonutChart({ transactions, categories }: { transactions: Transaction[];
     return (
       <div className="flex flex-col items-center justify-center h-full py-6">
         <div className="w-24 h-24 rounded-full glass-subtle flex items-center justify-center mb-3">
-          <PieChart className="w-8 h-8 text-gray-300" />
+          <PieChart className="w-8 h-8 text-gray-300 dark:text-gray-600" />
         </div>
-        <p className="text-sm text-gray-400 font-medium">Belum ada pengeluaran</p>
+        <p className="text-sm text-gray-400 dark:text-gray-500 font-medium">Belum ada pengeluaran</p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col items-center gap-4">
-      <div className="relative w-36 h-36">
-        <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
-          <circle cx="18" cy="18" r="14" fill="transparent" stroke="rgba(0,0,0,0.04)" strokeWidth="3.5" />
-          {segments.map((seg) => (
-            <circle
-              key={seg.catId}
-              cx="18"
-              cy="18"
-              r="14"
-              fill="transparent"
-              stroke={seg.color}
-              strokeWidth="3.5"
-              strokeDasharray={`${seg.pct * 0.88} ${100 - seg.pct * 0.88}`}
-              strokeDashoffset={-seg.offset * 0.88}
-              strokeLinecap="round"
-              className="transition-all duration-700"
-              style={{ opacity: 0.85 }}
-            />
-          ))}
+    // Pembungkus utama disetel tetap center secara vertikal dan horizontal
+    <div className="flex flex-col items-center justify-center gap-3 select-none w-full h-full pb-2">
+      
+      {/* Container Diagram Bulat */}
+      <div className="relative w-50 h-50 flex items-center justify-center flex-shrink-0">
+        <svg 
+          viewBox="-3 -3 42 42" 
+          className="w-full h-full -rotate-90 drop-shadow-[0_6px_14px_rgba(0,0,0,0.06)]"
+        >
+          {/* 1. Lingkaran Background / Track bawah */}
+          <circle cx="18" cy="18" r="14" fill="transparent" stroke="rgba(0,0,0,0.02)" strokeWidth="6" />
+
+          {/* 2. Segmen Kategori */}
+          {[...segments]
+            .sort((a, b) => {
+              if (hoveredSeg && a.name === hoveredSeg.name) return 1;
+              if (hoveredSeg && b.name === hoveredSeg.name) return -1;
+              return 0;
+            })
+            .map((seg) => {
+              const isHovered = hoveredSeg && hoveredSeg.name === seg.name;
+              return (
+                <circle
+                  key={seg.catId}
+                  cx="18"
+                  cy="18"
+                  r={isHovered ? 14.8 : 14}
+                  fill="transparent"
+                  stroke={seg.color}
+                  strokeDasharray={`${seg.pct * 0.88} ${100 - seg.pct * 0.88}`}
+                  strokeDashoffset={-seg.offset * 0.88}
+                  strokeLinecap="butt"
+                  className="cursor-pointer transition-all duration-300 ease-out"
+                  style={{ 
+                    opacity: hoveredSeg ? (isHovered ? 1 : 0.3) : 0.9, 
+                    strokeWidth: isHovered ? '8' : '6'
+                  }}
+                  onMouseEnter={() => setHoveredSeg({ name: seg.name, amount: seg.amount, icon: seg.icon })}
+                  onMouseLeave={() => setHoveredSeg(null)}
+                />
+              );
+            })}
         </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-lg font-bold text-gray-800" style={{ fontFamily: 'var(--font-poppins), Poppins' }}>{expenses.length}</span>
-          <span className="text-[10px] text-gray-400 font-medium">Transaksi</span>
+
+        {/* PERBAIKAN UTAMA: Angka Transaksi & Teks di Tengah Lingkaran */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-4 text-center">
+          {hoveredSeg ? (
+            <div className="w-full max-w-[85px] flex flex-col items-center justify-center overflow-hidden">
+              {/* Icon kategori aktif */}
+              <span className="text-sm mb-0.5 flex-shrink-0">{hoveredSeg.icon}</span>
+              {/* Nama kategori dikunci lebarnya dan diberi truncate agar tidak merusak lingkaran */}
+              <p className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide truncate w-full">
+                {hoveredSeg.name}
+              </p>
+              {/* Ukuran Rupiah disesuaikan jadi text-xs agar muat sempurna di dalam */}
+              <p className="text-xs font-black text-red-500 dark:text-red-400 mt-0.5 whitespace-nowrap">
+                Rp{formatRupiah(hoveredSeg.amount)}
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-2xl font-black text-gray-800 dark:text-gray-100 leading-none mb-1">{expenses.length}</p>
+              <p className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Transaksi</p>
+            </>
+          )}
         </div>
       </div>
-      <div className="flex flex-wrap gap-2 justify-center">
-        {segments.slice(0, 4).map(seg => (
-          <div key={seg.catId} className="flex items-center gap-1.5 text-xs">
-            <div className="w-2 h-2 rounded-full" style={{ background: seg.color }} />
-            <span className="text-gray-500 font-medium">{seg.icon} {seg.name}</span>
-          </div>
-        ))}
+
+      {/* Daftar Kategori di Bawah Diagram (Hanya menampilkan 4 kategori teratas & berposisi center) */}
+      <div className="flex flex-wrap justify-center items-center gap-x-4 gap-y-2 mt-2 w-full px-4">
+        {segments.slice(0, 4).map((seg) => {
+          const isHovered = hoveredSeg && hoveredSeg.name === seg.name;
+          return (
+            <div 
+              key={seg.catId} 
+              // Lebar maksimal teks legenda dibatasi agar dipotong titik-titik jika kepanjangan
+              className={`flex items-center gap-1.5 text-[11px] font-medium transition-all duration-200 cursor-pointer max-w-[120px] ${
+                hoveredSeg && !isHovered ? 'opacity-40 grayscale' : 'opacity-100'
+              }`}
+              onMouseEnter={() => setHoveredSeg({ name: seg.name, amount: seg.amount, icon: seg.icon })}
+              onMouseLeave={() => setHoveredSeg(null)}
+            >
+              <div 
+                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 transition-transform duration-200 ${isHovered ? 'scale-125 shadow-sm' : ''}`}
+                style={{ backgroundColor: seg.color }}
+              />
+              <span className="text-gray-500 dark:text-gray-400 flex items-center gap-1 truncate">
+                <span className="flex-shrink-0">{seg.icon}</span>
+                <span className={`truncate ${isHovered ? 'text-gray-800 dark:text-gray-200 font-bold' : ''}`}>{seg.name}</span>
+              </span>
+            </div>
+          );
+        })}
       </div>
+
     </div>
   );
-}
+} // Batas Akhir Penutup Fungsi Komponen DonutChart
 
 // --- BAR CHART COMPONENT ---
 function BarChartComponent({ transactions }: { transactions: Transaction[] }) {
@@ -264,11 +342,7 @@ function BarChartComponent({ transactions }: { transactions: Transaction[] }) {
       const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
       const dayStr = toInputDate(d);
       const dayLabel = days[d.getDay()];
-      // Debug: log to help troubleshoot date matching
-      const dayTxs = transactions.filter(t => {
-        const normalized = normalizeDate(t.date);
-        return normalized === dayStr;
-      });
+      const dayTxs = transactions.filter(t => normalizeDate(t.date) === dayStr);
       const incomeTotal = dayTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
       const expenseTotal = dayTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
       last7.push({
@@ -281,84 +355,104 @@ function BarChartComponent({ transactions }: { transactions: Transaction[] }) {
     return last7;
   }, [transactions]);
 
-  // Use a single max value for consistent scaling between income and expense
+  // Gunakan batas maksimum konstan untuk skala grafik
   const maxValue = Math.max(...dailyData.map(d => Math.max(d.income, d.expense)), 1);
-
   const hasAnyData = dailyData.some(d => d.income > 0 || d.expense > 0);
 
   if (!hasAnyData) {
     return (
-      <div className="flex flex-col items-center justify-center h-[180px] py-6">
-        <BarChart3 className="w-8 h-8 text-gray-300 mb-2" />
-        <p className="text-xs text-gray-400 font-medium">Belum ada data 7 hari terakhir</p>
+      <div className="flex flex-col items-center justify-center h-[200px] py-6">
+        <BarChart3 className="w-8 h-8 text-gray-300 dark:text-gray-600 mb-2" />
+        <p className="text-xs text-gray-400 dark:text-gray-500 font-medium">Belum ada data 7 hari terakhir</p>
       </div>
     );
   }
 
   return (
-    <div className="flex items-end gap-2 h-[180px] pt-2">
-      {dailyData.map((d, i) => (
-        <div key={i} className="flex-1 flex flex-col items-center gap-1">
-          {/* Amount label */}
-          <div className="text-[8px] font-bold text-gray-400 h-3 flex items-end">
-            {d.expense > 0 && d.income > 0
-              ? `${(d.expense/1000).toFixed(0)}k/${(d.income/1000).toFixed(0)}k`
-              : d.expense > 0 ? `${(d.expense/1000).toFixed(0)}k`
-              : d.income > 0 ? `${(d.income/1000).toFixed(0)}k`
-              : ''}
+    <div className="relative h-[210px] w-full pt-4 flex flex-col justify-between select-none">
+      
+      {/* 1. LAYER GRIDS: Garis Panduan Horizontal Belakang */}
+      <div className="absolute inset-0 top-7 bottom-8 flex flex-col justify-between pointer-events-none z-0">
+        <div className="w-full border-b border-gray-100 dark:border-white/5" />
+        <div className="w-full border-b border-gray-100 dark:border-white/5" />
+        <div className="w-full border-b border-gray-100 dark:border-white/5" />
+        <div className="w-full border-b border-gray-100 dark:border-white/5" />
+      </div>
+
+      {/* 2. LAYER UTAMA: Grafik Batang dan Label Nominal */}
+      <div className="flex items-end gap-2 h-[170px] relative z-10">
+        {dailyData.map((d, i) => (
+          <div key={i} className="flex-1 flex gap-1.5 items-end h-full">
+            
+            {/* KELOMPOK BAR PENGELUARAN (MERAH) */}
+            <div className="flex-1 flex flex-col items-center justify-end h-full group">
+              {/* Teks nominal tepat di atas bar pengeluaran */}
+              <div className="text-[9px] font-bold text-red-500/90 h-4 flex items-end mb-1 opacity-0 group-hover:opacity-100 sm:opacity-100 transition-opacity whitespace-nowrap">
+                {d.expense > 0 ? `${(d.expense / 1000).toFixed(d.expense % 1000 === 0 ? 0 : 1)}k` : ''}
+              </div>
+              {d.expense > 0 ? (
+                <div
+                  className="glass-bar w-full rounded-t-lg transition-all duration-500 hover:brightness-105"
+                  style={{
+                    height: `${Math.max((d.expense / maxValue) * 120, 6)}px`,
+                    background: 'linear-gradient(to top, #EF4444, #F87171)',
+                    boxShadow: '0 4px 12px rgba(239, 68, 68, 0.15)'
+                  }}
+                  title={`Pengeluaran: Rp ${formatRupiah(d.expense)}`}
+                />
+              ) : (
+                <div className="w-full h-1.5 rounded-full bg-red-500/10 dark:bg-red-500/5" />
+              )}
+            </div>
+
+            {/* KELOMPOK BAR PEMASUKAN (HIJAU) */}
+            <div className="flex-1 flex flex-col items-center justify-end h-full group">
+              {/* Teks nominal tepat di atas bar pemasukan */}
+              <div className="text-[9px] font-bold text-emerald-500/90 h-4 flex items-end mb-1 opacity-0 group-hover:opacity-100 sm:opacity-100 transition-opacity whitespace-nowrap">
+                {d.income > 0 ? `${(d.income / 1000).toFixed(d.income % 1000 === 0 ? 0 : 1)}k` : ''}
+              </div>
+              {d.income > 0 ? (
+                <div
+                  className="glass-bar w-full rounded-t-lg transition-all duration-500 hover:brightness-105"
+                  style={{
+                    height: `${Math.max((d.income / maxValue) * 120, 6)}px`,
+                    background: 'linear-gradient(to top, #10B981, #34D399)',
+                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.15)'
+                  }}
+                  title={`Pemasukan: Rp ${formatRupiah(d.income)}`}
+                />
+              ) : (
+                <div className="w-full h-1.5 rounded-full bg-emerald-500/10 dark:bg-emerald-500/5" />
+              )}
+            </div>
+
           </div>
-          <div className="w-full flex gap-0.5 items-end" style={{ height: '130px' }}>
-            {d.expense > 0 ? (
-              <div
-                className="glass-bar flex-1"
-                style={{
-                  height: `${Math.max((d.expense / maxValue) * 100, 8)}%`,
-                  background: 'linear-gradient(to top, #EF4444, #F87171)',
-                }}
-                title={`Pengeluaran: Rp ${formatRupiah(d.expense)}`}
-              />
-            ) : (
-              <div
-                className="glass-bar flex-1"
-                style={{
-                  height: '4px',
-                  background: 'rgba(239, 68, 68, 0.15)',
-                }}
-              />
-            )}
-            {d.income > 0 ? (
-              <div
-                className="glass-bar flex-1"
-                style={{
-                  height: `${Math.max((d.income / maxValue) * 100, 8)}%`,
-                  background: 'linear-gradient(to top, #10B981, #34D399)',
-                }}
-                title={`Pemasukan: Rp ${formatRupiah(d.income)}`}
-              />
-            ) : (
-              <div
-                className="glass-bar flex-1"
-                style={{
-                  height: '4px',
-                  background: 'rgba(16, 185, 129, 0.15)',
-                }}
-              />
-            )}
+        ))}
+      </div>
+
+      {/* 3. LAYER BAWAH: Nama-Nama Hari */}
+      <div className="flex justify-between items-center gap-2 relative z-10 border-t border-gray-100 dark:border-white/5 pt-1">
+        {dailyData.map((d, i) => (
+          <div key={i} className="flex-1 text-center">
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 font-semibold uppercase tracking-wider">
+              {d.label}
+            </span>
           </div>
-          <span className="text-[10px] text-gray-400 font-medium">{d.label}</span>
-        </div>
-      ))}
+        ))}
+      </div>
+
     </div>
   );
 }
 
 // --- AUTH SCREEN ---
-function AuthScreen({ onAuth }: { onAuth: (email: string, password: string, isLogin: boolean) => Promise<void> }) {
+function AuthScreen({ onAuth, onGoogleLogin }: { onAuth: (email: string, password: string, isLogin: boolean) => Promise<void>; onGoogleLogin: () => Promise<void> }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -377,8 +471,20 @@ function AuthScreen({ onAuth }: { onAuth: (email: string, password: string, isLo
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setGoogleLoading(true);
+    setError('');
+    try {
+      await onGoogleLogin();
+    } catch {
+      setError('Gagal login dengan Google. Coba lagi.');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
   return (
-    <div className="glance-app min-h-screen flex items-center justify-center relative">
+    <div className="glance-app h-screen overflow-hidden relative flex items-center justify-center">
       <div className="glance-bg" />
       <div className="glance-orb glance-orb-1" />
       <div className="glance-orb glance-orb-2" />
@@ -428,7 +534,7 @@ function AuthScreen({ onAuth }: { onAuth: (email: string, password: string, isLo
               placeholder="Sandi"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              className="glass-input mb-5"
+              className="glass-input mb-4"
             />
             <button
               type="submit"
@@ -445,6 +551,34 @@ function AuthScreen({ onAuth }: { onAuth: (email: string, password: string, isLo
             </button>
           </form>
 
+          {/* Divider */}
+          <div className="w-full flex items-center gap-3 my-5">
+            <div className="flex-1 h-px bg-gray-200" />
+            <span className="text-xs text-gray-400 font-semibold">atau</span>
+            <div className="flex-1 h-px bg-gray-200" />
+          </div>
+
+          {/* Google Login Button */}
+          <button
+            onClick={handleGoogleLogin}
+            disabled={googleLoading}
+            className="w-full flex items-center justify-center gap-3 px-6 py-3.5 bg-white border-2 border-gray-200 rounded-2xl font-bold text-[14px] text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-300"
+          >
+            {googleLoading ? (
+              <div className="w-5 h-5 border-2 border-gray-300 border-t-indigo-500 rounded-full animate-spin" />
+            ) : (
+              <>
+                <svg width="20" height="20" viewBox="0 0 24 24">
+                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                </svg>
+                Login dengan Google
+              </>
+            )}
+          </button>
+
           <button
             onClick={() => { setIsLogin(!isLogin); setError(''); }}
             className="mt-5 text-sm font-semibold text-indigo-500 hover:text-indigo-600 transition-colors"
@@ -457,23 +591,113 @@ function AuthScreen({ onAuth }: { onAuth: (email: string, password: string, isLo
   );
 }
 
-// --- MAIN APP COMPONENT ---
+/// --- MAIN APP COMPONENT ---
 export default function GlanceApp() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  
+  // PERBAIKAN 1: Lahirkan dulu state transactions, customCats, dan budgets di paling atas fungsi
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [customCats, setCustomCats] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<BudgetItem[]>([]);
+
+  // PERBAIKAN 2: Logika useMemo diletakkan setelah state transactions lahir, sehingga 100% LEGAL & AMAN
+  const financialStreak = useMemo(() => {
+    if (!transactions || transactions.length === 0) return 0;
+
+    // 1. Ambil semua tanggal unik transaksi (diurutkan dari yang terbaru)
+    const dates = transactions
+      .map(t => new Date(t.date).toDateString())
+      .filter((value, index, self) => self.indexOf(value) === index)
+      .map(d => new Date(d))
+      .sort((a, b) => b.getTime() - a.getTime());
+
+    if (dates.length === 0) return 0;
+
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    // Jika transaksi terbaru bukan hari ini atau kemarin, streak otomatis putus (0)
+    const latestTxDate = dates[0];
+    latestTxDate.setHours(0,0,0,0);
+    if (latestTxDate.getTime() !== today.getTime() && latestTxDate.getTime() !== yesterday.getTime()) {
+      return 0;
+    }
+
+    // 2. Hitung berapa hari berurutan ke belakang
+    let streak = 1;
+    for (let i = 0; i < dates.length - 1; i++) {
+      const current = new Date(dates[i]);
+      const next = new Date(dates[i + 1]);
+      
+      current.setDate(current.getDate() - 1);
+      current.setHours(0,0,0,0);
+      next.setHours(0,0,0,0);
+
+      if (current.getTime() === next.getTime()) {
+        streak++;
+      } else if (current.getTime() > next.getTime()) {
+        break; // Ada hari yang bolong, hitungan stop
+      }
+    }
+    return streak;
+  }, [transactions]);
+
+  // LOGIKA AMAN: MEMBUKA LENCANA (BADGES)
+  const badges = useMemo(() => {
+    const totalSpent = (transactions || [])
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const list = [
+      { id: '1', name: 'Hemat Pemula', desc: 'Mencatat transaksi pertama', icon: '🌱', unlocked: (transactions || []).length >= 1 },
+      { id: '2', name: 'Disiplin 3 Hari', desc: 'Mencapai 3 hari streak mencatat', icon: '🔥', unlocked: financialStreak >= 3 },
+      { id: '3', name: 'Raja Budgeting', desc: 'Membuat minimal 3 anggaran belanja', icon: '👑', unlocked: (budgets || []).length >= 3 },
+      { id: '4', name: 'Sultan Bijak', desc: 'Total catatan transaksi menyentuh 15 item', icon: '💎', unlocked: (transactions || []).length >= 15 },
+    ];
+
+    return list;
+  }, [transactions, financialStreak, budgets]);
+
+  // Sisa state pendukung di bawahnya tetap aman berbaris rapi:
   const [isModalOpen, setIsModalOpen] = useState<ModalType>(null);
+
   const [toast, setToast] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // Saklar untuk memunculkan kembang api
+  const [showConfetti, setShowConfetti] = useState(false);
+
+  // Logika otomatis: Tembakkan kembang api saat lencana baru terbuka!
+  useEffect(() => {
+    const unlockedCount = badges.filter(b => b.unlocked).length;
+    if (unlockedCount > 0 && typeof window !== 'undefined') {
+      const localKey = `unlocked_badges_count`;
+      const prevCount = parseInt(localStorage.getItem(localKey) || '0', 10);
+      
+      if (unlockedCount > prevCount) {
+        setShowConfetti(true); // Nyalakan kembang api!
+        localStorage.setItem(localKey, unlockedCount.toString());
+        const timer = setTimeout(() => setShowConfetti(false), 5000); // Matikan otomatis setelah 5 detik
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [badges]);
+
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [detailTx, setDetailTx] = useState<Transaction | null>(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
+  const [budgetStartDate, setBudgetStartDate] = useState('');
+  const [budgetEndDate, setBudgetEndDate] = useState('');
 
   // Form state
   const [formMerchant, setFormMerchant] = useState('');
+  const [editTxId, setEditTxId] = useState<string | null>(null);
   const [formAmount, setFormAmount] = useState('');
   const [formCatId, setFormCatId] = useState('');
   const [formDate, setFormDate] = useState('');
@@ -484,6 +708,38 @@ export default function GlanceApp() {
   const [budgetCatId, setBudgetCatId] = useState('');
   const [budgetLimit, setBudgetLimit] = useState('');
   const [budgetEditId, setBudgetEditId] = useState<string | null>(null);
+
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+
+  // State untuk mengontrol pop-up informasi akun di sidebar
+  const [isProfilePopupOpen, setIsProfilePopupOpen] = useState(false);
+
+  // Fungsi untuk mengeksekusi reset data
+   // Fungsi untuk mengeksekusi reset data secara menyeluruh (Cloud + Lokal)
+  const handleResetData = async () => {
+    if (!user) return;
+    
+    try {
+      // 1. Timpa data di Firebase Firestore menjadi kosong
+      await saveData(user.uid, 'transactions', []);
+      await saveData(user.uid, 'categories', []);
+      await saveData(user.uid, 'budgets', []);
+
+      // 2. Kosongkan state lokal agar layar langsung bersih
+      setTransactions([]);
+      setCustomCats([]);
+      setBudgets([]);
+
+      // 3. Bersihkan juga sisa cache di local storage
+      localStorage.clear();
+
+      // 4. Tutup modal & beri notifikasi sukses
+      setIsResetModalOpen(false);
+      showToast('Semua data berhasil direset! 🧹');
+    } catch (error) {
+      showToast('Gagal mereset data. Coba lagi.');
+    }
+  };
 
   // Scan receipt state
   const [scanning, setScanning] = useState(false);
@@ -503,6 +759,14 @@ export default function GlanceApp() {
 
   const ALL_CATS = useMemo(() => [...DEFAULT_CATEGORIES, ...customCats], [customCats]);
 
+  // Dashboard time filter state
+  const [dashTimeFilter, setDashTimeFilter] = useState<'all' | 'today' | '7days' | 'month' | 'custom'>('all');
+  const [dashDateFrom, setDashDateFrom] = useState<string>('');
+  const [dashDateTo, setDashDateTo] = useState<string>('');
+
+  const [dashDropdownOpen, setDashDropdownOpen] = useState(false);
+
+
   // Lock body scroll when modal is open
   useEffect(() => {
     if (isModalOpen) {
@@ -517,6 +781,79 @@ export default function GlanceApp() {
   useEffect(() => {
     return onAuthStateChanged(auth, setUser);
   }, []);
+
+  // --- KEYBOARD EVENT LISTENER (ENTER TO CONFIRM) ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter') return;
+
+      // 1. Jika Pop-up Keluar sedang terbuka -> ABAIKAN (Keamanan)
+      if (logoutConfirm) {
+        return; 
+      }
+
+      // 2. Jika Modal Konfirmasi Hapus Transaksi terbuka -> Setujui Hapus
+      if (deleteConfirm) {
+        e.preventDefault();
+        handleDelete(deleteConfirm);
+        return;
+      }
+
+      // 3. Jika Modal Transaksi (Pemasukan/Pengeluaran) terbuka
+      if (isModalOpen === 'income' || isModalOpen === 'expense') {
+        e.preventDefault();
+        addTx(isModalOpen);
+        return;
+      }
+
+      // 4. Jika Modal Kategori Kustom terbuka -> Simpan Kategori
+      if (isModalOpen === 'category') {
+        e.preventDefault();
+        addCategory();
+        return;
+      }
+
+      // 5. Jika Modal Detail Transaksi terbuka -> Tutup Detail
+      if (detailTx) {
+        e.preventDefault();
+        setDetailTx(null);
+        return;
+      }
+
+      // 6. Jika Tab Anggaran aktif dan input sedang diisi -> Simpan Anggaran
+      if (activeTab === 'budget' && budgetCatId && budgetLimit) {
+        e.preventDefault();
+        saveBudget();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [
+    logoutConfirm,
+    deleteConfirm,
+    isModalOpen,
+    detailTx,
+    activeTab,
+    budgetCatId,
+    budgetLimit,
+    formMerchant,
+    formAmount,
+    formCatId,
+    formDate,
+    formCatName,
+    formCatIcon,
+    budgetStartDate,
+    budgetEndDate,
+    transactions,
+    customCats,
+    budgets,
+    user
+  ]);
+
 
   // Load data from Firestore when user changes + real-time sync
   useEffect(() => {
@@ -599,25 +936,71 @@ export default function GlanceApp() {
   }, [user]);
 
   // Calculations
-  const totalExp = useMemo(() => transactions.filter(t => t.type === 'expense').reduce((s, e) => s + e.amount, 0), [transactions]);
-  const totalInc = useMemo(() => transactions.filter(t => t.type === 'income').reduce((s, e) => s + e.amount, 0), [transactions]);
+  // 1. Menyaring transaksi khusus untuk Dashboard berdasarkan rentang waktu yang dipilih
+  const dashFilteredTransactions = useMemo(() => {
+    const todayStr = toInputDate(new Date());
+    
+    return transactions.filter(t => {
+      const tDate = normalizeDate(t.date);
+      
+      if (dashTimeFilter === 'today') {
+        return tDate === todayStr;
+      }
+      
+      if (dashTimeFilter === '7days') {
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        return tDate >= toInputDate(sevenDaysAgo) && tDate <= todayStr;
+      }
+      
+      if (dashTimeFilter === 'month') {
+        const now = new Date();
+        const startOfMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+        return tDate >= startOfMonth && tDate <= todayStr;
+      }
+      
+      if (dashTimeFilter === 'custom') {
+        if (dashDateFrom && tDate < dashDateFrom) return false;
+        if (dashDateTo && tDate > dashDateTo) return false;
+        return true;
+      }
+      
+      return true; // 'all' - Semua Waktu
+    });
+  }, [transactions, dashTimeFilter, dashDateFrom, dashDateTo]);
+
+  // 2. Kalkulasi nilai dashboard otomatis menggunakan data yang sudah terfilter
+  const totalExp = useMemo(() => dashFilteredTransactions.filter(t => t.type === 'expense').reduce((s, e) => s + e.amount, 0), [dashFilteredTransactions]);
+  const totalInc = useMemo(() => dashFilteredTransactions.filter(t => t.type === 'income').reduce((s, e) => s + e.amount, 0), [dashFilteredTransactions]);
   const balance = totalInc - totalExp;
 
   // Budget spending per category (current month)
+  // Budget spending per category (berdasarkan rentang tanggal anggaran)
   const categorySpending = useMemo(() => {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
     const spending: Record<string, number> = {};
+
     transactions.forEach(t => {
       if (t.type !== 'expense') return;
-      const tDate = new Date(t.createdAt);
-      if (tDate.getMonth() === currentMonth && tDate.getFullYear() === currentYear) {
-        spending[t.categoryId] = (spending[t.categoryId] || 0) + t.amount;
+      
+      const tDate = normalizeDate(t.date); // Tanggal transaksi (YYYY-MM-DD)
+      const budget = budgets.find(b => b.categoryId === t.categoryId);
+
+      if (budget && budget.startDate && budget.endDate) {
+        // Jika anggaran memiliki batas tanggal, hitung transaksi di rentang tersebut
+        if (tDate >= budget.startDate && tDate <= budget.endDate) {
+          spending[t.categoryId] = (spending[t.categoryId] || 0) + t.amount;
+        }
+      } else {
+        // Fallback jika tidak ada tanggal: hitung pengeluaran bulan ini
+        const now = new Date();
+        const txDate = new Date(t.createdAt);
+        if (txDate.getMonth() === now.getMonth() && txDate.getFullYear() === now.getFullYear()) {
+          spending[t.categoryId] = (spending[t.categoryId] || 0) + t.amount;
+        }
       }
     });
     return spending;
-  }, [transactions]);
+  }, [transactions, budgets]);
 
   const totalBudget = useMemo(() => budgets.reduce((s, b) => s + b.limit, 0), [budgets]);
 
@@ -661,14 +1044,19 @@ export default function GlanceApp() {
     else await createUserWithEmailAndPassword(auth, email, password);
   };
 
+  const handleGoogleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+  };
+
   // Add transaction
+  // Add atau Edit transaction
   const addTx = async (txType: 'income' | 'expense') => {
     if (!user) return;
     setFormError('');
 
-    // If we have scanned items, create a separate transaction for each
+    // Proses scan nota tetap sama
     if (txType === 'expense' && scanItems.length > 0) {
-      // Validate all scanned items have categories
       const missingCat = scanItems.some(item => !item.categoryId);
       if (missingCat) {
         setFormError('Pilih kategori untuk semua item.');
@@ -697,7 +1085,6 @@ export default function GlanceApp() {
         resetForm();
         setIsModalOpen(null);
       } catch {
-        // Even if save fails, data is kept locally with localStorage fallback
         showToast('Berhasil disimpan! ✨');
         resetForm();
         setIsModalOpen(null);
@@ -707,6 +1094,7 @@ export default function GlanceApp() {
       return;
     }
 
+    // Validasi form manual
     if (!formMerchant.trim()) {
       setFormError('Keterangan harus diisi.');
       return;
@@ -723,28 +1111,46 @@ export default function GlanceApp() {
     setSaving(true);
     try {
       const dateValue = formDate || toInputDate(new Date());
+      let updatedTx: Transaction[];
 
-      const newTx: Transaction = {
-        id: 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
-        merchant: formMerchant.trim(),
-        amount: Number(formAmount),
-        type: txType,
-        categoryId: formCatId,
-        date: dateValue,
-        createdAt: new Date().toISOString(),
-      };
+      if (editTxId) {
+        // MODE EDIT
+        updatedTx = transactions.map(t => {
+          if (t.id === editTxId) {
+            return {
+              ...t,
+              merchant: formMerchant.trim(),
+              amount: Number(formAmount),
+              categoryId: formCatId,
+              date: dateValue,
+              updatedAt: new Date().toISOString(), // Rekam waktu edit
+            };
+          }
+          return t;
+        });
+      } else {
+        // MODE TAMBAH BARU
+        const newTx: Transaction = {
+          id: 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9),
+          merchant: formMerchant.trim(),
+          amount: Number(formAmount),
+          type: txType,
+          categoryId: formCatId,
+          date: dateValue,
+          createdAt: new Date().toISOString(),
+        };
+        updatedTx = [newTx, ...transactions].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      }
 
-      const updatedTx = [newTx, ...transactions].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
       setTransactions(updatedTx);
       await saveData(user.uid, 'transactions', updatedTx);
-      showToast('Berhasil disimpan! ✨');
+      showToast(editTxId ? 'Berhasil diperbarui! ✏️' : 'Berhasil disimpan! ✨');
       resetForm();
       setIsModalOpen(null);
     } catch {
-      // Even if save fails, data is kept locally with localStorage fallback
-      showToast('Berhasil disimpan! ✨');
+      showToast(editTxId ? 'Berhasil diperbarui! ✏️' : 'Berhasil disimpan! ✨');
       resetForm();
       setIsModalOpen(null);
     } finally {
@@ -789,16 +1195,29 @@ export default function GlanceApp() {
 
   // Save budget
   const saveBudget = () => {
-    if (!user || !budgetCatId || !budgetLimit || Number(budgetLimit) <= 0) {
-      showToast('Pilih kategori dan masukkan batas anggaran.');
+    if (!user || !budgetCatId || !budgetLimit || Number(budgetLimit) <= 0 || !budgetStartDate || !budgetEndDate) {
+      showToast('Lengkapi kategori, batas anggaran, dan rentang tanggal.');
+      return;
+    }
+    if (budgetStartDate > budgetEndDate) {
+      showToast('Tanggal mulai tidak boleh lebih dari tanggal akhir.');
       return;
     }
     const existing = budgets.filter(b => b.categoryId !== budgetCatId);
-    const newBudgets = [...existing, { categoryId: budgetCatId, limit: Number(budgetLimit) }];
+    const newBudgets = [...existing, { 
+      categoryId: budgetCatId, 
+      limit: Number(budgetLimit),
+      startDate: budgetStartDate,
+      endDate: budgetEndDate 
+    }];
     setBudgets(newBudgets);
     saveData(user.uid, 'budgets', newBudgets);
+    
+    // Reset form
     setBudgetCatId('');
     setBudgetLimit('');
+    setBudgetStartDate('');
+    setBudgetEndDate('');
     setBudgetEditId(null);
     showToast('Anggaran disimpan! 🎯');
   };
@@ -833,6 +1252,7 @@ export default function GlanceApp() {
     setScanPreview(null);
     setScanItems([]);
     setScanMerchant('');
+    setEditTxId(null);
   };
 
   const openTxModal = (type: 'income' | 'expense') => {
@@ -945,7 +1365,7 @@ export default function GlanceApp() {
 
   // Auth screen
   if (user === null) {
-    return <AuthScreen onAuth={handleAuth} />;
+    return <AuthScreen onAuth={handleAuth} onGoogleLogin={handleGoogleLogin} />;
   }
 
   // Get category for transaction
@@ -960,7 +1380,7 @@ export default function GlanceApp() {
   ];
 
   return (
-    <div className="glance-app min-h-screen relative flex">
+    <div className="glance-app h-screen overflow-hidden relative flex">
       {/* Background effects */}
       <div className="glance-bg" />
       <div className="glance-orb glance-orb-1" />
@@ -968,74 +1388,232 @@ export default function GlanceApp() {
       <div className="glance-orb glance-orb-3" />
 
       {/* === SIDEBAR === */}
-      <aside className="glass-sidebar w-[260px] flex-shrink-0 flex flex-col p-6 relative z-10 hidden lg:flex">
-        <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="flex items-center gap-3 mb-10"
+      {/* === SIDEBAR === */}
+      <aside
+        className={`h-screen sticky top-0 glass-sidebar flex-shrink-0 flex flex-col relative z-10 hidden lg:flex transition-all duration-300 ease-in-out overflow-hidden ${
+          sidebarOpen ? 'w-[260px] p-4' : 'w-[76px] p-4'
+        }`}
+      >
+        {/* Header: Logo + Toggle */}
+        <div 
+          className="flex items-center h-11 cursor-pointer mb-8 relative flex-shrink-0 group"
+          onClick={() => { if (!sidebarOpen) setSidebarOpen(true); }}
+          title={!sidebarOpen ? 'Buka sidebar' : undefined}
         >
-          <GlanceLogo size={44} />
-          <h2 className="glance-h2 text-xl text-gray-800">Glance</h2>
-        </motion.div>
+          {/* Wadah logo pas 44px (w-11) */}
+          <div className="w-11 h-11 flex items-center justify-center flex-shrink-0 relative">
+            
+            {/* 1. Logo Glance (menghilang & mengecil saat di-hover jika sidebar tertutup) */}
+            <div className={`transition-all duration-300 flex items-center justify-center absolute inset-0 ${
+              !sidebarOpen ? 'group-hover:opacity-0 group-hover:scale-75' : 'opacity-100'
+            }`}>
+              <GlanceLogo size={38} />
+            </div>
+
+            {/* 2. Icon Buka Sidebar (muncul & membesar saat di-hover khusus ketika sidebar tertutup) */}
+            {!sidebarOpen && (
+              <div className="transition-all duration-300 opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 absolute inset-0 flex items-center justify-center">
+                <PanelLeftOpen className="w-[22px] h-[22px] text-gray-600" />
+              </div>
+            )}
+
+          </div>
+
+          {/* Teks animasi */}
+          <div className={`transition-all duration-300 ease-in-out whitespace-nowrap overflow-hidden flex items-center ${
+            sidebarOpen ? 'opacity-100 ml-3 w-auto' : 'opacity-0 ml-0 w-0'
+          }`}>
+            <h2 className="glance-h2 text-xl text-gray-800">Glance</h2>
+          </div>
+
+          {/* Tombol tutup hanya muncul saat terbuka */}
+          {sidebarOpen && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation(); // Mencegah memicu onClick milik parent
+                setSidebarOpen(false);
+              }}
+              className="p-1.5 rounded-xl hover:bg-gray-200/50 transition-colors ml-auto flex-shrink-0"
+              title="Tutup sidebar"
+            >
+              <PanelLeftClose className="w-5 h-5 text-gray-500" />
+            </button>
+          )}
+        </div>
 
         {/* Quick actions */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="flex flex-col gap-2 mb-8"
-        >
+        <div className="flex flex-col gap-2 mb-6 flex-shrink-0">
           <button
             onClick={() => openTxModal('expense')}
-            className="glass-btn glass-btn-danger text-sm w-full"
+            className="glass-btn glass-btn-danger text-sm w-full h-11 flex items-center justify-center !p-0 !gap-0 transition-all duration-300 ease-in-out overflow-hidden whitespace-nowrap"
+            title={!sidebarOpen ? 'Pengeluaran' : undefined}
           >
-            <Minus className="w-4 h-4" />
-            Pengeluaran
+            {/* Ikon berdiri sendiri tanpa bungkus div w-11 */}
+            <Minus className="w-[18px] h-[18px] flex-shrink-0" />
+            
+            {/* Teks dengan margin-left (ml-2) saat terbuka */}
+            <div className={`transition-all duration-300 overflow-hidden ${
+              sidebarOpen ? 'opacity-100 ml-2 w-auto' : 'opacity-0 w-0 ml-0'
+            }`}>
+              Pengeluaran
+            </div>
           </button>
+          
           <button
             onClick={() => openTxModal('income')}
-            className="glass-btn glass-btn-success text-sm w-full"
+            className="glass-btn glass-btn-success text-sm w-full h-11 flex items-center justify-center !p-0 !gap-0 transition-all duration-300 ease-in-out overflow-hidden whitespace-nowrap"
+            title={!sidebarOpen ? 'Pemasukan' : undefined}
           >
-            <Plus className="w-4 h-4" />
-            Pemasukan
+            <Plus className="w-[18px] h-[18px] flex-shrink-0" />
+            <div className={`transition-all duration-300 overflow-hidden ${
+              sidebarOpen ? 'opacity-100 ml-2 w-auto' : 'opacity-0 w-0 ml-0'
+            }`}>
+              Pemasukan
+            </div>
           </button>
-        </motion.div>
+        </div>
 
-        {/* Navigation */}
-        <nav className="flex-1">
+        {/* Divider */}
+        <div className="border-t border-gray-200/60 mb-4 flex-shrink-0" />
+
+        {/* Navigation - Scrollable hanya saat terbuka, mencegah scrollbar misterius saat tertutup */}
+        <nav className={`flex-1 min-h-0 space-y-1 ${sidebarOpen ? 'overflow-y-auto custom-scroll' : 'overflow-hidden'}`}>
           {navItems.map((item, i) => (
             <motion.div
               key={item.id}
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.1 + i * 0.05 }}
-              className={`glass-nav ${activeTab === item.id ? 'glass-nav-active' : ''}`}
-              onClick={() => setActiveTab(item.id)}
+              className={`glass-nav flex items-center transition-all duration-300 ease-in-out overflow-hidden cursor-pointer h-11 w-full !p-0 ${
+                activeTab === item.id ? 'glass-nav-active' : ''
+              }`}
+              onClick={() => {
+                setActiveTab(item.id);
+                if (!sidebarOpen) setSidebarOpen(true);
+              }}
+              title={!sidebarOpen ? item.label : undefined}
             >
-              <item.icon className="w-[18px] h-[18px]" />
-              {item.label}
+              <div className="w-11 h-11 flex items-center justify-center flex-shrink-0">
+                <item.icon className="w-[18px] h-[18px]" />
+              </div>
+              <div className={`transition-all duration-300 whitespace-nowrap overflow-hidden ${
+                sidebarOpen ? 'opacity-100 ml-2' : 'opacity-0 w-0'
+              }`}>
+                {item.label}
+              </div>
             </motion.div>
           ))}
         </nav>
 
-        {/* User info & logout */}
-        <div className="mt-auto">
-          <div className="glass rounded-2xl p-3 mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-400 flex items-center justify-center text-white text-xs font-bold">
+        {/* Divider */}
+        <div className="border-t border-gray-200/60 mt-4 mb-4 flex-shrink-0" />
+
+        {/* User info & logout - Bottom */}
+        <div className="flex-shrink-0 flex flex-col gap-2 relative">
+          
+          {/* === POP-UP INFORMASI AKUN MELAYANG (Hanya muncul jika sidebarOpen & pop-up di-klik) === */}
+          <AnimatePresence>
+            {isProfilePopupOpen && sidebarOpen && (
+              <>
+                {/* Overlay transparan penutup otomatis saat klik luar */}
+                <div 
+                  className="fixed inset-0 z-40 cursor-default" 
+                  onClick={() => setIsProfilePopupOpen(false)} 
+                />
+                
+                {/* Kotak Informasi Akun */}
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                  className="absolute bottom-full left-0 right-0 z-50 mb-2 bg-white dark:bg-[#161925] border border-gray-100 dark:border-white/10 rounded-[24px] p-4 shadow-xl space-y-3 w-full"
+                >
+                  {/* Header Pop-up mini */}
+                  <div className="flex items-center gap-2.5 pb-2 border-b border-gray-100 dark:border-white/5">
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-400 to-purple-400 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                      {user.email?.[0]?.toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-bold text-gray-700 dark:text-gray-200 truncate">
+                        {user.email}
+                      </p>
+                      <p className="text-[9px] text-emerald-500 font-semibold flex items-center gap-0.5">
+                        <span className="w-1 h-1 rounded-full bg-emerald-500" /> Terverifikasi
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Ringkasan Informasi Akun */}
+                  <div className="space-y-1.5 text-[10px]">
+                    <div className="flex items-center justify-between py-1.5 px-2.5 bg-gray-50 dark:bg-gray-800/30 rounded-xl">
+                      <span className="text-gray-400 font-medium">Total Transaksi</span>
+                      <span className="font-bold text-gray-700 dark:text-gray-200">{transactions.length}</span>
+                    </div>
+                    <div className="flex items-center justify-between py-1.5 px-2.5 bg-gray-50 dark:bg-gray-800/30 rounded-xl">
+                      <span className="text-gray-400 font-medium">Anggaran Aktif</span>
+                      <span className="font-bold text-gray-700 dark:text-gray-200">{budgets.length}</span>
+                    </div>
+                  </div>
+
+                  {/* Tombol Menuju Pengaturan Akun */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('settings');
+                      setIsProfilePopupOpen(false);
+                    }}
+                    className="w-full py-2 px-3 text-center text-[11px] font-bold text-indigo-500 bg-indigo-500/5 hover:bg-indigo-500 hover:text-white rounded-xl transition-all duration-200"
+                  >
+                    Kelola Akun Penuh
+                  </button>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+
+          {/* User Card */}
+          <div
+            className={`flex items-center transition-all duration-300 ease-in-out overflow-hidden cursor-pointer h-11 w-full ${
+              sidebarOpen ? 'glass rounded-2xl bg-gray-50/50 dark:bg-gray-800/10' : ''
+            }`}
+            onClick={() => { 
+              if (!sidebarOpen) {
+                setSidebarOpen(true); 
+              } else {
+                setIsProfilePopupOpen(!isProfilePopupOpen); // Membuka pop-up jika sidebar sudah terbuka
+              }
+            }}
+            title={!sidebarOpen ? user.email || '' : undefined}
+          >
+            <div className="w-11 h-11 flex items-center justify-center flex-shrink-0">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-400 to-purple-400 flex items-center justify-center text-white text-sm font-bold">
                 {user.email?.[0]?.toUpperCase()}
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-gray-700 truncate">{user.email}</p>
-              </div>
+            </div>
+            <div className={`transition-all duration-300 flex flex-col justify-center whitespace-nowrap overflow-hidden ${
+              sidebarOpen ? 'opacity-100 ml-2 w-[140px]' : 'opacity-0 w-0'
+            }`}>
+              <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate">{user.email}</p>
             </div>
           </div>
+
+          {/* Logout Button */}
           <button
-            onClick={() => signOut(auth)}
-            className="glass-btn glass-btn-ghost w-full text-sm text-red-500 hover:!bg-red-50"
+            onClick={() => setLogoutConfirm(true)}
+            className="glass-btn glass-btn-ghost w-full h-11 flex items-center justify-start !p-0 !gap-0 text-red-500 hover:!bg-red-50 transition-all duration-300 ease-in-out overflow-hidden whitespace-nowrap"
+            title={!sidebarOpen ? 'Keluar' : undefined}
           >
-            <LogOut className="w-4 h-4" />
-            Keluar
+            {/* Wadah ikon */}
+            <div className={`${sidebarOpen ? 'w-10' : 'w-full'} h-11 flex items-center justify-center flex-shrink-0 transition-all duration-300`}>
+              <LogOut className="w-[18px] h-[18px]" />
+            </div>
+            {/* Teks */}
+            <div className={`transition-all duration-300 whitespace-nowrap overflow-hidden ${
+              sidebarOpen ? 'opacity-100 ml-0' : 'opacity-0 w-0 ml-0'
+            }`}>
+              Keluar
+            </div >
           </button>
         </div>
       </aside>
@@ -1108,16 +1686,142 @@ export default function GlanceApp() {
           {/* === DASHBOARD === */}
           {activeTab === 'dashboard' && (
             <div>
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mb-8"
-              >
-                <h1 className="glance-h1 text-3xl lg:text-4xl text-gray-800">
-                  Halo! 👋
-                </h1>
-                <p className="text-gray-400 text-sm mt-1">Berikut ringkasan aktivitas keuangan Anda.</p>
-              </motion.div>
+              {/* HEADERS DASHBOARD: Layout Fleksibel Sempurna (Responsive) */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  className="mb-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 w-full border-b border-gray-100/10 dark:border-white/5 pb-4"
+                >
+                  {/* === SECTION: SALAM UTAMA (GREETING) === */}
+                  {(() => {
+                    const hours = new Date().getHours();
+                    let waktuSapaan = "Malam";
+                    
+                    if (hours >= 4 && hours < 11) waktuSapaan = "Pagii";
+                    else if (hours >= 11 && hours < 15) waktuSapaan = "Siang";
+                    else if (hours >= 15 && hours < 18) waktuSapaan = "Soree";
+
+                    const emailName = user.email ? user.email.split('@')[0] : "User";
+                    const rawFirstWord = emailName.split(/[^a-zA-Z]/)[0]; 
+                    const namaPanggilan = rawFirstWord.charAt(0).toUpperCase() + rawFirstWord.slice(1);
+
+                    return (
+                      <div className="flex flex-col gap-1 w-full lg:w-auto">
+                        <div className="flex items-center gap-2">
+                          <h1 className="text-2xl font-black text-gray-800 dark:text-white tracking-tight">
+                            {waktuSapaan}, <span className="text-indigo-500">{namaPanggilan}</span>
+                          </h1>
+                          <motion.span
+                            animate={{ rotate: [0, 14, -8, 14, -4, 10, 0, 0] }}
+                            transition={{ duration: 2.5, repeat: Infinity, repeatType: "reverse", ease: "easeInOut" }}
+                            className="text-2xl inline-block origin-[70%_70%]"
+                          >
+                            {waktuSapaan === "Malam" ? "🌙" : "👋"}
+                          </motion.span>
+                        </div>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 font-medium whitespace-normal">
+                          Yuk, pantau dan rapikan catatan keuanganmu hari ini.
+                        </p>
+                      </div>
+                    );
+                  })()}
+                    
+                  {/* Bagian Kanan: Kontainer Filter Berderet (Rata kiri saat mobile/split, Rata kanan saat fullscreen) */}
+                  <div className="flex flex-row flex-wrap items-center justify-start lg:justify-end gap-2 w-full lg:w-auto">
+                    
+                    {/* Badge Streak */}
+                    <div 
+                      className="flex items-center gap-1.5 bg-gradient-to-r from-orange-500/10 to-amber-500/10 dark:from-orange-500/20 dark:to-amber-500/20 border border-orange-500/20 text-orange-600 dark:text-orange-400 px-3 py-2 rounded-xl text-xs font-black shadow-sm cursor-default" 
+                      title="Streak Pencatatan Keuangan"
+                    >
+                      <span className="animate-pulse text-sm">⚡</span> 
+                      <span>{financialStreak} Hari</span>
+                    </div>
+
+                    {/* Pembungkus Tombol Dropdown */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setDashDropdownOpen(!dashDropdownOpen)}
+                        className="flex items-center gap-2 bg-white/60 dark:bg-[#161925]/60 backdrop-blur-md border border-gray-200/60 dark:border-white/5 text-xs font-bold py-2 px-3.5 rounded-xl shadow-sm text-gray-700 dark:text-gray-200 hover:bg-white/80 dark:hover:bg-[#161925]/80 transition-all duration-200 whitespace-nowrap select-none"
+                      >
+                        <span>
+                          {dashTimeFilter === 'all' && "📅 Semua"}
+                          {dashTimeFilter === 'today' && "☀️ Hari Ini"}
+                          {dashTimeFilter === '7days' && "📊 7 Hari"}
+                          {dashTimeFilter === 'month' && "🗓️ Bulan Ini"}
+                          {dashTimeFilter === 'custom' && "⚙️ Kustom"}
+                        </span>
+                        <ChevronRight className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${dashDropdownOpen ? 'rotate-90' : 'rotate-0'}`} />
+                      </button>
+
+                      {/* FLOATING MENU DROPDOWN */}
+                      <AnimatePresence>
+                        {dashDropdownOpen && (
+                          <>
+                            <div className="fixed inset-0 z-40" onClick={() => setDashDropdownOpen(false)} />
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0.95, y: -8 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              exit={{ opacity: 0, scale: 0.95, y: -8 }}
+                              transition={{ duration: 0.15, ease: "easeOut" }}
+                              className="absolute left-0 lg:right-0 lg:left-auto top-full mt-2 w-48 bg-white/90 dark:bg-[#161925]/95 backdrop-blur-lg border border-gray-100 dark:border-white/10 rounded-2xl shadow-xl p-1 flex flex-col gap-0.5 z-50 overflow-hidden origin-top-left lg:origin-top-right"
+                            >
+                              {[
+                                { id: 'all', label: 'Semua Waktu', icon: '📅' },
+                                { id: 'today', label: 'Hari Ini', icon: '☀️' },
+                                { id: '7days', label: '7 Hari Terakhir', icon: '📊' },
+                                { id: 'month', label: 'Bulan Ini', icon: '🗓️' },
+                                { id: 'custom', label: 'Kustom Tanggal', icon: '⚙️' }
+                              ].map((opt) => (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setDashTimeFilter(opt.id as any);
+                                    setDashDropdownOpen(false);
+                                  }}
+                                  className={`flex items-center gap-2.5 text-left text-xs font-semibold px-3 py-2.5 rounded-xl transition-all duration-150 ${
+                                    dashTimeFilter === opt.id
+                                      ? 'bg-indigo-500 text-white shadow-md'
+                                      : 'text-gray-600 dark:text-gray-200 hover:bg-gray-100/80 dark:hover:bg-white/10 hover:text-gray-900 dark:hover:text-white'
+                                  }`}
+                                >
+                                  <span className="text-sm leading-none shrink-0">{opt.icon}</span>
+                                  <span>{opt.label}</span>
+                                </button>
+                              ))}
+                            </motion.div>
+                          </>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                    {/* Baris 2: Bar Input Kalender Kustom */}
+                    {dashTimeFilter === 'custom' && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95 }} 
+                        animate={{ opacity: 1, scale: 1 }} 
+                        className="flex flex-row items-center gap-1.5 bg-white/60 dark:bg-[#161925]/60 backdrop-blur-md border border-gray-200/60 dark:border-white/5 rounded-xl p-1 shadow-sm"
+                      >
+                        <input 
+                          type="date" 
+                          value={dashDateFrom} 
+                          onChange={e => setDashDateFrom(e.target.value)} 
+                          className="bg-transparent text-xs font-medium py-1 px-1 outline-none border-none text-gray-700 dark:text-gray-200 [color-scheme:light] dark:[color-scheme:dark] w-[105px]" 
+                        />
+                        <span className="text-[10px] font-bold text-gray-400">s/d</span>
+                        <input 
+                          type="date" 
+                          value={dashDateTo} 
+                          onChange={e => setDashDateTo(e.target.value)} 
+                          className="bg-transparent text-xs font-medium py-1 px-1 outline-none border-none text-gray-700 dark:text-gray-200 [color-scheme:light] dark:[color-scheme:dark] w-[105px]" 
+                        />
+                      </motion.div>
+                    )}
+
+                  </div>
+                </motion.div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-5">
                 {/* Hero Balance Card */}
@@ -1125,9 +1829,14 @@ export default function GlanceApp() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.05 }}
-                  className="glass-hero rounded-[28px] p-7 md:col-span-2 lg:col-span-3 flex justify-between items-center min-h-[180px]"
+                  className="glass-hero rounded-[28px] p-7 md:col-span-2 lg:col-span-3 flex justify-between items-center min-h-[180px] relative overflow-hidden"
                 >
-                  <div>
+                  {/* Large masked logo background */}
+                  <div className="absolute right-5 -bottom-39 opacity-20 pointer-events-none" style={{ width: 310, height: 310 }}>
+                    <img src="/logotr.png" alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </div>
+
+                  <div className="relative z-10">
                     <div className="flex items-center gap-2 mb-2">
                       <Wallet className="w-5 h-5 opacity-80" />
                       <span className="text-sm font-bold opacity-80 tracking-wider uppercase">Saldo Bersih</span>
@@ -1146,74 +1855,151 @@ export default function GlanceApp() {
                       </div>
                     </div>
                   </div>
-                  <div className="hidden sm:block opacity-30">
-                    <GlanceLogo size={100} />
-                  </div>
                 </motion.div>
 
-                {/* Stats Cards Row */}
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 }}
-                  className="glass rounded-[24px] p-5"
+                
+
+                {/* === BARIS 1: KARTU PEMASUKAN MODERN === */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  transition={{ delay: 0.1 }} 
+                  className="bg-white/80 dark:bg-[#161925]/60 backdrop-blur-md border border-white/20 dark:border-white/5 rounded-[24px] p-5 shadow-sm flex flex-col h-[340px]"
                 >
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-3 flex-shrink-0">
                     <div className="flex items-center gap-2">
-                      <div className="w-9 h-9 rounded-xl bg-emerald-100 flex items-center justify-center">
-                        <TrendingUp className="w-4 h-4 text-emerald-600" />
+                      <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center">
+                        <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                       </div>
-                      <h3 className="glance-h3 text-sm text-gray-500">Pemasukan</h3>
+                      <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Pemasukan</h3>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => openTxModal('income')}
+                      className="w-8 h-8 rounded-full bg-emerald-500/10 hover:bg-emerald-500 text-emerald-600 dark:text-emerald-400 hover:text-white flex items-center justify-center transition-all duration-200 shadow-sm group"
+                      title="Tambah Pemasukan"
+                    >
+                      <Plus className="w-[16px] h-[16px] transition-transform duration-200 group-hover:scale-110 group-active:scale-95" />
+                    </button>
                   </div>
-                  <p className="glance-h2 text-2xl text-emerald-600">+Rp {formatRupiah(totalInc)}</p>
-                  <p className="text-xs text-gray-400 mt-1">{transactions.filter(t => t.type === 'income').length} transaksi</p>
+
+                  <div className="flex-shrink-0 mb-3">
+                    <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 leading-none">
+                      +Rp {formatRupiah(totalInc)}
+                    </p>
+                  </div>
+
+                  <div className="flex-1 min-h-0 overflow-y-auto custom-scroll pr-1 space-y-2">
+                    {dashFilteredTransactions.filter(t => t.type === 'income').length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-center opacity-60 py-6">
+                        <p className="text-[11px] font-semibold text-gray-400">Belum ada pemasukan</p>
+                      </div>
+                    ) : (
+                      dashFilteredTransactions.filter(t => t.type === 'income').map((t) => {
+                        const cat = ALL_CATS.find(c => c.id === t.categoryId);
+                        return (
+                          <div key={t.id} onClick={() => setDetailTx(t)} className="flex items-center justify-between p-2 rounded-xl bg-gray-50/50 dark:bg-gray-800/20 border border-gray-100/50 dark:border-white/5 cursor-pointer hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition-all duration-150">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-sm flex-shrink-0">{cat?.icon || '💵'}</span>
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-gray-700 dark:text-gray-200 truncate">{t.merchant}</p>
+                                <p className="text-[9px] text-gray-400">{t.date}</p>
+                              </div>
+                            </div>
+                            <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 ml-2 whitespace-nowrap">+{formatRupiah(t.amount)}</span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </motion.div>
 
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.15 }}
-                  className="glass rounded-[24px] p-5"
+                {/* === BARIS 1: KARTU PENGELUARAN MODERN === */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  transition={{ delay: 0.15 }} 
+                  className="bg-white/80 dark:bg-[#161925]/60 backdrop-blur-md border border-white/20 dark:border-white/5 rounded-[24px] p-5 shadow-sm flex flex-col h-[340px]"
                 >
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-3 flex-shrink-0">
                     <div className="flex items-center gap-2">
-                      <div className="w-9 h-9 rounded-xl bg-red-100 flex items-center justify-center">
-                        <TrendingDown className="w-4 h-4 text-red-600" />
+                      <div className="w-8 h-8 rounded-xl bg-red-100 dark:bg-red-950/40 flex items-center justify-center">
+                        <TrendingDown className="w-4 h-4 text-red-600 dark:text-red-400" />
                       </div>
-                      <h3 className="glance-h3 text-sm text-gray-500">Pengeluaran</h3>
+                      <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Pengeluaran</h3>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => openTxModal('expense')}
+                      className="w-8 h-8 rounded-full bg-red-500/10 hover:bg-red-500 text-red-600 dark:text-red-400 hover:text-white flex items-center justify-center transition-all duration-200 shadow-sm group"
+                      title="Catat Pengeluaran"
+                    >
+                      <Minus className="w-[16px] h-[16px] transition-transform duration-200 group-hover:scale-110 group-active:scale-95" />
+                    </button>
                   </div>
-                  <p className="glance-h2 text-2xl text-red-500">-Rp {formatRupiah(totalExp)}</p>
-                  <p className="text-xs text-gray-400 mt-1">{transactions.filter(t => t.type === 'expense').length} transaksi</p>
+
+                  <div className="flex-shrink-0 mb-3">
+                    <p className="text-2xl font-black text-red-500 dark:text-red-400 leading-none">
+                      -Rp {formatRupiah(totalExp)}
+                    </p>
+                  </div>
+
+                  <div className="flex-1 min-h-0 overflow-y-auto custom-scroll pr-1 space-y-2">
+                    {dashFilteredTransactions.filter(t => t.type === 'expense').length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-center opacity-60 py-6">
+                        <p className="text-[11px] font-semibold text-gray-400">Belum ada pengeluaran</p>
+                      </div>
+                    ) : (
+                      dashFilteredTransactions.filter(t => t.type === 'expense').map((t) => {
+                        const cat = ALL_CATS.find(c => c.id === t.categoryId);
+                        return (
+                          <div key={t.id} onClick={() => setDetailTx(t)} className="flex items-center justify-between p-2 rounded-xl bg-gray-50/50 dark:bg-gray-800/20 border border-gray-100/50 dark:border-white/5 cursor-pointer hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition-all duration-150">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-sm flex-shrink-0">{cat?.icon || '🛍️'}</span>
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-gray-700 dark:text-gray-200 truncate">{t.merchant}</p>
+                                <p className="text-[9px] text-gray-400">{t.date}</p>
+                              </div>
+                            </div>
+                            <span className="text-xs font-extrabold text-red-500 dark:text-red-400 ml-2 whitespace-nowrap">-{formatRupiah(t.amount)}</span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </motion.div>
 
+                {/* === BARIS 1: KARTU DISTRIBUSI === */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.2 }}
-                  className="glass rounded-[24px] p-5"
+                  className="bg-white/80 dark:bg-[#161925]/60 backdrop-blur-md border border-white/20 dark:border-white/5 rounded-[24px] p-5 shadow-sm flex flex-col h-[340px]"
                 >
-                  <h3 className="glance-h3 text-sm text-gray-500 mb-3 flex items-center gap-2">
+                  <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2 flex-shrink-0">
                     <Sparkles className="w-4 h-4 text-indigo-400" />
                     Distribusi
                   </h3>
-                  <DonutChart transactions={transactions} categories={ALL_CATS} />
+                  <div className="flex-1 w-full flex flex-col items-center justify-center pb-4">
+                    <DonutChart transactions={dashFilteredTransactions} categories={ALL_CATS} />
+                  </div>
                 </motion.div>
 
-                {/* Bar Chart */}
+                {/* === BARIS 2: BAR CHART (Diberi col-span-2 agar melebar luas) === */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.25 }}
-                  className="glass rounded-[24px] p-5 md:col-span-2"
+                  className="glass rounded-[24px] p-5 md:col-span-2 lg:col-span-2 flex flex-col justify-between min-h-[310px]"
                 >
                   <h3 className="glance-h3 text-sm text-gray-500 mb-3 flex items-center gap-2">
                     <BarChart3 className="w-4 h-4 text-indigo-400" />
                     Tren 7 Hari Terakhir
                   </h3>
-                  <BarChartComponent transactions={transactions} />
-                  <div className="flex items-center gap-4 mt-3 justify-center">
+                  <div className="flex-1 min-h-0 w-full">
+                    <BarChartComponent transactions={transactions} />
+                  </div>
+                  <div className="flex items-center gap-4 mt-3 justify-center flex-shrink-0">
                     <div className="flex items-center gap-1.5 text-xs text-gray-400">
                       <div className="w-3 h-2 rounded-sm bg-gradient-to-r from-red-500 to-red-400" />
                       Pengeluaran
@@ -1225,60 +2011,65 @@ export default function GlanceApp() {
                   </div>
                 </motion.div>
 
-                {/* Budget Summary on Dashboard */}
+                {/* === BARIS 2: KARTU ANGGARAN BULAN INI (Diberi col-span-1 agar pas di kanan) === */}
                 {budgets.length > 0 && (
                   <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.28 }}
-                    className="glass rounded-[24px] p-5"
+                    className="glass rounded-[24px] p-5 lg:col-span-1 flex flex-col justify-between min-h-[310px]"
                   >
-                    <h3 className="glance-h3 text-sm text-gray-500 mb-3 flex items-center gap-2">
-                      <Target className="w-4 h-4 text-indigo-400" />
-                      Anggaran Bulan Ini
-                    </h3>
-                    <div className="space-y-3">
-                      {budgets.slice(0, 4).map(b => {
-                        const cat = getCat(b.categoryId);
-                        const spent = categorySpending[b.categoryId] || 0;
-                        const pct = b.limit > 0 ? Math.min((spent / b.limit) * 100, 100) : 0;
-                        const overBudget = spent > b.limit;
-                        return (
-                          <div key={b.categoryId}>
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs font-semibold text-gray-600">
-                                {cat?.icon || '💰'} {cat?.name || 'Lainnya'}
-                              </span>
-                              <span className={`text-xs font-bold ${overBudget ? 'text-red-500' : 'text-gray-500'}`}>
-                                {formatRupiah(spent)} / {formatRupiah(b.limit)}
-                              </span>
+                    <div>
+                      <h3 className="glance-h3 text-sm text-gray-500 mb-3 flex items-center gap-2">
+                        <Target className="w-4 h-4 text-indigo-400" />
+                        Anggaran
+                      </h3>
+                      <div className="space-y-3">
+                        {budgets.slice(0, 5).map(b => {
+                          const cat = ALL_CATS.find(c => c.id === b.categoryId);
+                          const spent = categorySpending[b.categoryId] || 0;
+                          const pct = b.limit > 0 ? Math.min((spent / b.limit) * 100, 100) : 0;
+                          const overBudget = spent > b.limit;
+                          return (
+                            <div key={b.categoryId}>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                                  {cat?.icon || '💰'} {cat?.name || 'Lainnya'}
+                                </span>
+                                <span className={`text-xs font-bold ${overBudget ? 'text-red-500' : 'text-gray-500'}`}>
+                                  {formatRupiah(spent)} / {formatRupiah(b.limit)}
+                                </span>
+                              </div>
+                              <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all duration-500"
+                                  style={{
+                                    width: `${pct}%`,
+                                    background: overBudget
+                                      ? 'linear-gradient(to right, #EF4444, #DC2626)'
+                                      : `linear-gradient(to right, ${cat?.color || '#6366F1'}, ${cat?.color || '#818CF8'})`,
+                                  }}
+                                />
+                              </div>
                             </div>
-                            <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
-                              <div
-                                className="h-full rounded-full transition-all duration-500"
-                                style={{
-                                  width: `${pct}%`,
-                                  background: overBudget
-                                    ? 'linear-gradient(to right, #EF4444, #DC2626)'
-                                    : `linear-gradient(to right, ${cat?.color || '#6366F1'}, ${cat?.color || '#818CF8'})`,
-                                }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {budgets.length > 4 && (
-                        <button
-                          onClick={() => setActiveTab('budget')}
-                          className="text-xs font-semibold text-indigo-500 hover:text-indigo-600 flex items-center gap-1"
-                        >
-                          Lihat Semua <ChevronRight className="w-3 h-3" />
-                        </button>
-                      )}
+                          );
+                        })}
+                      </div>
                     </div>
+                    
+                    {budgets.length > 5 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('budget')}
+                        className="text-xs font-semibold text-indigo-500 hover:text-indigo-600 flex items-center gap-1 mt-3 self-start"
+                      >
+                        Lihat Semua <ChevronRight className="w-3 h-3" />
+                      </button>
+                    )}
                   </motion.div>
                 )}
 
+              
                 {/* Recent Transactions */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
@@ -1656,39 +2447,64 @@ export default function GlanceApp() {
                   <Plus className="w-4 h-4 text-indigo-400" />
                   {budgetEditId ? 'Edit Anggaran' : 'Tambah Anggaran'}
                 </h3>
-                <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
-                  <select
-                    value={budgetCatId}
-                    onChange={e => setBudgetCatId(e.target.value)}
-                    className="glass-select"
-                  >
-                    <option value="">Pilih Kategori</option>
-                    {ALL_CATS.filter(c => !budgets.some(b => b.categoryId === c.id) || c.id === budgetEditId).map(c => (
-                      <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    placeholder="Batas pengeluaran (Rp)"
-                    value={budgetLimit}
-                    onChange={e => setBudgetLimit(e.target.value)}
-                    className="glass-input !mb-0"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={saveBudget}
-                      className="glass-btn glass-btn-primary text-sm whitespace-nowrap"
+                <div className="flex flex-col gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <select
+                      value={budgetCatId}
+                      onChange={e => setBudgetCatId(e.target.value)}
+                      className="glass-select !mb-0"
                     >
-                      {budgetEditId ? 'Perbarui' : 'Simpan'}
-                    </button>
-                    {budgetEditId && (
+                      <option value="">Pilih Kategori</option>
+                      {ALL_CATS.filter(c => !budgets.some(b => b.categoryId === c.id) || c.id === budgetEditId).map(c => (
+                        <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      placeholder="Batas pengeluaran (Rp)"
+                      value={budgetLimit}
+                      onChange={e => setBudgetLimit(e.target.value)}
+                      className="glass-input !mb-0"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
+                    <div className="relative">
+                      <span className="absolute -top-2 left-3 bg-white px-1 text-[10px] font-semibold text-gray-500 rounded-md shadow-sm">Dari Tanggal</span>
+                      <input
+                        type="date"
+                        value={budgetStartDate}
+                        onChange={e => setBudgetStartDate(e.target.value)}
+                        className="glass-input !mb-0 pt-3"
+                      />
+                    </div>
+                    <div className="relative">
+                      <span className="absolute -top-2 left-3 bg-white px-1 text-[10px] font-semibold text-gray-500 rounded-md shadow-sm">Sampai Tanggal</span>
+                      <input
+                        type="date"
+                        value={budgetEndDate}
+                        onChange={e => setBudgetEndDate(e.target.value)}
+                        className="glass-input !mb-0 pt-3"
+                      />
+                    </div>
+                    <div className="flex gap-2 items-end h-full">
                       <button
-                        onClick={() => { setBudgetEditId(null); setBudgetCatId(''); setBudgetLimit(''); }}
-                        className="glass-btn glass-btn-ghost text-sm"
+                        onClick={saveBudget}
+                        className="glass-btn glass-btn-primary text-sm whitespace-nowrap h-[46px]"
                       >
-                        Batal
+                        {budgetEditId ? 'Perbarui' : 'Simpan'}
                       </button>
-                    )}
+                      {budgetEditId && (
+                        <button
+                          onClick={() => { 
+                            setBudgetEditId(null); setBudgetCatId(''); setBudgetLimit(''); 
+                            setBudgetStartDate(''); setBudgetEndDate(''); 
+                          }}
+                          className="glass-btn glass-btn-ghost text-sm h-[46px]"
+                        >
+                          Batal
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -1707,6 +2523,7 @@ export default function GlanceApp() {
                     </div>
                     <p className="text-gray-500 font-semibold">Belum ada anggaran</p>
                     <p className="text-sm text-gray-400 mt-1">Atur batas pengeluaran per kategori untuk mengontrol keuangan</p>
+                    
                   </div>
                 </motion.div>
               ) : (
@@ -1734,10 +2551,18 @@ export default function GlanceApp() {
                             >
                               {cat?.icon || '💰'}
                             </div>
+                            
+                            {/* BAGIAN TEKS YANG SUDAH DIRAPIKAN (TIDAK DOUBLE) */}
                             <div>
                               <p className="font-bold text-gray-800">{cat?.name || 'Lainnya'}</p>
                               <p className="text-xs text-gray-400">Batas: Rp {formatRupiah(b.limit)}</p>
+                              {b.startDate && b.endDate && (
+                                <p className="text-[10px] text-indigo-500 font-semibold mt-0.5">
+                                  {formatDate(b.startDate)} - {formatDate(b.endDate)}
+                                </p>
+                              )}
                             </div>
+                            
                           </div>
                           <div className="flex items-center gap-1">
                             <button
@@ -1745,6 +2570,8 @@ export default function GlanceApp() {
                                 setBudgetEditId(b.categoryId);
                                 setBudgetCatId(b.categoryId);
                                 setBudgetLimit(String(b.limit));
+                                setBudgetStartDate(b.startDate || '');
+                                setBudgetEndDate(b.endDate || '');
                               }}
                               className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
                             >
@@ -1799,7 +2626,7 @@ export default function GlanceApp() {
                         {/* Spending detail */}
                         <div className="mt-2 pt-2 border-t border-gray-100">
                           <div className="flex justify-between items-center">
-                            <span className="text-xs text-gray-400">Terpakai bulan ini</span>
+                            <span className="text-xs text-gray-400">Total Terpakai</span>
                             <span className="text-xs font-bold text-gray-600">Rp {formatRupiah(spent)}</span>
                           </div>
                         </div>
@@ -1825,7 +2652,9 @@ export default function GlanceApp() {
                 <p className="text-gray-400 text-sm mt-1">Kustomisasi pengalaman Glance Anda.</p>
               </motion.div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-5">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-5">
+                
+                {/* --- KARTU 1: KATEGORI KUSTOM (YANG SEMPAT HILANG) --- */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1881,6 +2710,59 @@ export default function GlanceApp() {
                   </div>
                 </motion.div>
 
+    {/* === TUGAS: KARTU LENCANA PENCAPAIAN + CONFETTI (GABUNGAN) === */}
+    <div className="bg-white dark:bg-[#161925]/60 backdrop-blur-md border border-gray-100 dark:border-white/5 rounded-[32px] p-6 shadow-sm space-y-4 self-start">
+      
+      {/* 🎯 KEMBANG API SELEBRASI DITITIPKAN DI SINI */}
+      {showConfetti && (
+        <Confetti 
+          numberOfPieces={180} 
+          recycle={false} 
+          gravity={0.15}
+          style={{ position: 'fixed', inset: 0, zIndex: 9999, pointerEvents: 'none' }}
+        />
+      )}
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-black text-gray-800 dark:text-white">Lencana Pencapaian</h3>
+          <p className="text-[10px] text-gray-400">Selesaikan misi finansial untuk membuka lencana khusus</p>
+        </div>
+        {/* Streak Badge Melayang dengan Efek Pulse */}
+        {/* Streak Badge Melayang dengan Efek Pulse */}
+        <div className="inline-flex items-center justify-center gap-1.5 bg-orange-500/10 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 px-3 py-1.5 rounded-full text-[11px] font-black animate-pulse whitespace-nowrap flex-shrink-0">
+          <span className="text-sm leading-none flex-shrink-0">⚡</span>
+          <span>{financialStreak} Hari Streak</span>
+        </div>
+      </div>
+
+      {/* Grid Item Lencana (2 Kolom Seimbang) */}
+      <div className="grid grid-cols-2 gap-3">
+        {badges.map((b) => (
+          <div 
+            key={b.id} 
+            className={`flex items-center gap-3 p-3 border rounded-2xl transition-all duration-300 ${
+              b.unlocked 
+                ? 'bg-gradient-to-br from-indigo-500/5 to-purple-500/5 border-indigo-500/20 dark:border-indigo-500/30 opacity-100' 
+                : 'bg-gray-50/50 dark:bg-gray-900/10 border-gray-100 dark:border-white/5 opacity-40 grayscale'
+            }`}
+          >
+            {/* Wadah Icon Lencana */}
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-base shadow-inner flex-shrink-0 ${
+              b.unlocked ? 'bg-indigo-500/10' : 'bg-gray-100 dark:bg-gray-800'
+            }`}>
+              {b.icon}
+            </div>
+            <div className="min-w-0">
+              <h4 className="text-[11px] font-black text-gray-800 dark:text-gray-200 truncate">{b.name}</h4>
+              <p className="text-[9px] text-gray-400 dark:text-gray-500 leading-tight mt-0.5">{b.desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+                {/* --- KARTU 2: AKUN ANDA (YANG SUDAH ADA POPUP-NYA) --- */}
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1920,13 +2802,36 @@ export default function GlanceApp() {
                     </div>
                   </div>
 
+                  
+
+                   {/* === ZONA BERBAHAYA (RESET DATA) === */}
+                  <div className="mt-10 border-t border-red-500/20 pt-8">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-red-500/5 dark:bg-red-950/10 border border-red-500/10 rounded-2xl p-5">
+                      <div>
+                        <h4 className="text-gray-800 dark:text-gray-200 font-bold mb-1">Reset Semua Data</h4>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Tindakan ini akan menghapus seluruh riwayat transaksi, anggaran, dan pengaturan ke kondisi awal. Data tidak dapat dikembalikan.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsResetModalOpen(true)}
+                        className="flex-shrink-0 px-5 py-2.5 bg-red-500 hover:bg-red-600 text-white text-sm font-bold rounded-xl shadow-sm shadow-red-500/30 transition-all duration-200 active:scale-95"
+                      >
+                        Reset ke Awal
+                      </button>
+                    </div>
+
+                    {/* Tombol dengan fungsi setLogoutConfirm */}
+                    {/* DITAMBAHKAN mt-6 DI SINI UNTUK MEMBERI JARAK SPASI */}
                   <button
-                    onClick={() => signOut(auth)}
-                    className="glass-btn glass-btn-ghost w-full text-sm text-red-500 hover:!bg-red-50"
+                    onClick={() => setLogoutConfirm(true)}
+                    className="mt-6 glass-btn glass-btn-ghost w-full text-sm text-red-500 hover:!bg-red-50 flex items-center justify-center gap-2 py-3 rounded-2xl"
                   >
                     <LogOut className="w-4 h-4" />
                     Keluar Akun
                   </button>
+                 </div>
                 </motion.div>
               </div>
             </div>
@@ -1995,7 +2900,9 @@ export default function GlanceApp() {
                         )}
                       </div>
                       <h2 className="glance-h2 text-xl text-gray-800">
-                        {isModalOpen === 'income' ? 'Tambah Pemasukan' : 'Catat Pengeluaran'}
+                        {isModalOpen === 'income' 
+                          ? (editTxId ? 'Edit Pemasukan' : 'Tambah Pemasukan') 
+                          : (editTxId ? 'Edit Pengeluaran' : 'Catat Pengeluaran')}
                       </h2>
                     </div>
                   )}
@@ -2384,7 +3291,7 @@ export default function GlanceApp() {
 
                 {/* Created at */}
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-400 font-medium">Dibuat</span>
+                  <span className="text-sm text-gray-400 font-medium">Dibuat pada</span>
                   <span className="text-xs text-gray-500">
                     {new Date(detailTx.createdAt).toLocaleString('id-ID', {
                       day: 'numeric',
@@ -2395,23 +3302,58 @@ export default function GlanceApp() {
                     })}
                   </span>
                 </div>
+
+                {/* Updated at (Hanya muncul jika pernah diedit) */}
+                {detailTx.updatedAt && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-400 font-medium">Terakhir diedit</span>
+                    <span className="text-xs text-indigo-500 font-semibold">
+                      {new Date(detailTx.updatedAt).toLocaleString('id-ID', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                )}
               </div>
 
+              
+
               {/* Action buttons */}
-              <div className="flex gap-3 mt-6">
+              <div className="flex gap-2 mt-6">
                 <button
                   onClick={() => {
                     setDeleteConfirm(detailTx.id);
                     setDetailTx(null);
                   }}
                   className="glass-btn glass-btn-ghost flex-1 text-sm text-red-500 hover:!bg-red-50"
+                  title="Hapus"
                 >
                   <Trash2 className="w-4 h-4" />
-                  Hapus
+                </button>
+                <button
+                  onClick={() => {
+                    // Pindah data ke form untuk di-edit
+                    setEditTxId(detailTx.id);
+                    setFormMerchant(detailTx.merchant);
+                    // Gunakan Math.abs agar tanda minus (-) tidak terbawa saat mengedit pengeluaran
+                    setFormAmount(String(Math.abs(detailTx.amount))); 
+                    setFormCatId(detailTx.categoryId);
+                    setFormDate(detailTx.date);
+                    setIsModalOpen(detailTx.type);
+                    setDetailTx(null); // Tutup detail
+                  }}
+                  className="glass-btn glass-btn-ghost flex-[2] text-sm text-indigo-500 hover:!bg-indigo-50"
+                >
+                  <Edit3 className="w-4 h-4" />
+                  Edit
                 </button>
                 <button
                   onClick={() => setDetailTx(null)}
-                  className="glass-btn glass-btn-primary flex-1 text-sm"
+                  className="glass-btn glass-btn-primary flex-[2] text-sm"
                 >
                   Tutup
                 </button>
@@ -2420,7 +3362,49 @@ export default function GlanceApp() {
           </motion.div>
         )}
       </AnimatePresence>
-
+      {/* Logout confirmation modal */}
+      <AnimatePresence>
+        {logoutConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="glass-modal-bg fixed inset-0 z-50 flex items-center justify-center p-4"
+            onClick={() => setLogoutConfirm(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="glass-modal rounded-[24px] p-7 w-full max-w-[340px] text-center"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="w-14 h-14 rounded-2xl bg-red-100 flex items-center justify-center mx-auto mb-4">
+                <LogOut className="w-6 h-6 text-red-500" />
+              </div>
+              <h3 className="glance-h3 text-lg text-gray-800 mb-2">Yakin Ingin Keluar?</h3>
+              <p className="text-sm text-gray-400 mb-6">Anda harus memasukkan email dan sandi lagi untuk mengakses data Anda.</p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setLogoutConfirm(false);
+                    signOut(auth);
+                  }}
+                  className="glass-btn glass-btn-danger flex-1 text-sm"
+                >
+                  Ya, Keluar
+                </button>
+                <button
+                  onClick={() => setLogoutConfirm(false)}
+                  className="glass-btn glass-btn-ghost flex-1 text-sm"
+                >
+                  Batal
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Toast */}
       <AnimatePresence>
         {toast && (
@@ -2434,6 +3418,57 @@ export default function GlanceApp() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* === MODAL KONFIRMASI RESET DATA === */}
+      <AnimatePresence>
+        {isResetModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+            {/* Latar Belakang Gelap / Overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsResetModalOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            
+            {/* Kotak Pop-up */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white dark:bg-[#161925] border border-gray-100 dark:border-white/10 rounded-3xl p-6 md:p-8 max-w-sm w-full shadow-2xl flex flex-col items-center text-center"
+            >
+              <div className="w-16 h-16 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mb-5 shadow-inner">
+                <AlertTriangle className="w-8 h-8 text-red-600 dark:text-red-500" />
+              </div>
+              
+              <h3 className="text-xl font-black text-gray-800 dark:text-white mb-2">
+                Yakin Ingin Mereset?
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-8 leading-relaxed">
+                Semua data transaksi dan pengaturan akan <b>hilang selamanya</b>. Tindakan ini tidak dapat dibatalkan.
+              </p>
+              
+              <div className="flex gap-3 w-full">
+                <button
+                  onClick={() => setIsResetModalOpen(false)}
+                  className="flex-1 py-3 px-4 rounded-xl font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleResetData}
+                  className="flex-1 py-3 px-4 rounded-xl font-bold text-white bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30 transition-colors active:scale-95"
+                >
+                  Ya, Hapus
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
+
   );
 }

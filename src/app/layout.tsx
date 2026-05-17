@@ -26,12 +26,14 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Glance V2 - Smart Finance Tracker",
-  description: "Kelola keuangan semudah berkedip. Personal finance tracker with beautiful glassmorphism UI.",
-  keywords: ["Glance", "Finance", "Tracker", "Expense", "Income"],
+  title: "Glance - Smart Finance Tracker",
+  description: "Kelola keuangan semudah berkedip.",
+  keywords: ["Glance", "Finance", "Tracker"],
   authors: [{ name: "Glance Team" }],
   icons: {
-    icon: "/logo.svg",
+    icon: [
+      { url: "/logo.svg", type: "image/svg+xml" },
+    ],
   },
 };
 
